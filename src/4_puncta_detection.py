@@ -106,31 +106,31 @@ for name, image in not_saturated.items():
         binary = (cell > (cell_std*3.8)).astype(int)
         puncta_masks = measure.label(binary)
         puncta_masks = remove_small_objects(puncta_masks, 4**2)
-        cell_properties = feature_extractor(puncta_masks).add_prefix('granule_')
+        cell_properties = feature_extractor(puncta_masks).add_prefix('puncta_')
         g3bp_cell = np.where(image[2, :, :] == num, image[0, :, :], 0)
         g3bp_cell_mean = np.mean(g3bp_cell[g3bp_cell != 0])
 
         # make list for cov and skew, add as columns to properties
-        granule_cov_list = []
-        granule_skew_list = []
-        granule_intensity_list = []
+        puncta_cov_list = []
+        puncta_skew_list = []
+        puncta_intensity_list = []
         g3bp_intensity_list = []
-        for granule_num in np.unique(puncta_masks)[1:]:
-            granule_num
-            granule = np.where(puncta_masks == granule_num, image[1,:,:], 0)
-            g3bp = np.where(granule!=0, image[0,:,:], 0)
-            granule = granule[granule!=0]
+        for puncta_num in np.unique(puncta_masks)[1:]:
+            puncta_num
+            puncta = np.where(puncta_masks == puncta_num, image[1,:,:], 0)
+            g3bp = np.where(puncta!=0, image[0,:,:], 0)
+            puncta = puncta[puncta!=0]
             g3bp = g3bp[g3bp!=0]
-            granule_cov = np.std(granule) / np.mean(granule)
-            granule_cov_list.append(granule_cov)
-            res = skewtest(granule)
-            granule_skew = res.statistic
-            granule_skew_list.append(granule_skew)
-            granule_intensity_list.append(np.mean(granule))
+            puncta_cov = np.std(puncta) / np.mean(puncta)
+            puncta_cov_list.append(puncta_cov)
+            res = skewtest(puncta)
+            puncta_skew = res.statistic
+            puncta_skew_list.append(puncta_skew)
+            puncta_intensity_list.append(np.mean(puncta))
             g3bp_intensity_list.append(np.mean(g3bp))
-        cell_properties['granule_cov'] = granule_cov_list
-        cell_properties['granule_skew'] = granule_skew_list
-        cell_properties['granule_intensity'] = granule_intensity_list
+        cell_properties['puncta_cov'] = puncta_cov_list
+        cell_properties['puncta_skew'] = puncta_skew_list
+        cell_properties['puncta_intensity'] = puncta_intensity_list
         cell_properties['g3bp_intensity'] = g3bp_intensity_list
         
         if len(cell_properties) < 1:
@@ -159,62 +159,82 @@ feature_information['tag'] = feature_information['image_name'].str.split('-').st
 feature_information['condition'] = feature_information['image_name'].str.split('_').str[2].str.split('-').str[0]
 feature_information['rep'] = feature_information['image_name'].str.split('_').str[-1].str.split('-').str[0]
 
-# add aspect ratio and granule_circularity
-feature_information['granule_aspect_ratio'] = feature_information['granule_minor_axis_length'] / feature_information['granule_major_axis_length']
-feature_information['granule_circularity'] = (12.566*feature_information['granule_area'])/(feature_information['granule_perimeter']**2)
+# add aspect ratio and puncta_circularity
+feature_information['puncta_aspect_ratio'] = feature_information['puncta_minor_axis_length'] / feature_information['puncta_major_axis_length']
+feature_information['puncta_circularity'] = (12.566*feature_information['puncta_area'])/(feature_information['puncta_perimeter']**2)
 
 # add partitioning coeff for g3bp
 feature_information['g3bp_partition_coeff'] = feature_information['g3bp_intensity'] / feature_information['cell_g3bp_intensity_mean']
 
 # remove outliers
-granule_features_of_interest = ['granule_area', 'granule_eccentricity', 'granule_aspect_ratio', 'granule_circularity', 'granule_cov', 'granule_skew', 'g3bp_partition_coeff', 'cell_cov', 'cell_skew']
-for col in granule_features_of_interest[:-1]:
+puncta_features_of_interest = ['puncta_area', 'puncta_eccentricity', 'puncta_aspect_ratio', 'puncta_circularity', 'puncta_cov', 'puncta_skew', 'g3bp_partition_coeff', 'cell_cov', 'cell_skew']
+for col in puncta_features_of_interest[:-1]:
     feature_information = feature_information[np.abs(stats.zscore(feature_information[col])) < 3]
 
-# save data for plotting coords
-feature_information.to_csv(f'{output_folder}puncta_detection_feature_info.csv')
+# save data
+feature_information.to_csv(f'{output_folder}puncta_features.csv')
 
 # make additional df for avgs per replicate
-granule_summary_reps = []
-for col in granule_features_of_interest:
+feature_information_reps = []
+for col in puncta_features_of_interest:
     reps_table = feature_information.groupby(['condition', 'tag', 'rep']).mean(numeric_only=True)[f'{col}']
-    granule_summary_reps.append(reps_table)
-granule_summary_reps_df = functools.reduce(lambda left, right: pd.merge(left, right, on=['condition', 'tag', 'rep'], how='outer'), granule_summary_reps).reset_index()
+    feature_information_reps.append(reps_table)
+feature_information_reps_df = functools.reduce(lambda left, right: pd.merge(left, right, on=['condition', 'tag', 'rep'], how='outer'), feature_information_reps).reset_index()
+feature_information_reps_df.to_csv(f'{output_folder}puncta_features_reps.csv')
 
+# make additional dataframe normalized to cell intensity
+normalized_features = feature_information.copy()
+for col in puncta_features_of_interest:
+    normalized_features[col] = normalized_features[col] / normalized_features['cell_rhm1_intensity_mean']
+normalized_features.to_csv(f'{output_folder}puncta_features_normalized.csv')
+
+# make additional df for avgs per replicate
+normalized_features_reps = []
+for col in puncta_features_of_interest:
+    reps_table = normalized_features.groupby(['condition', 'tag', 'rep']).mean(numeric_only=True)[f'{col}']
+    normalized_features_reps.append(reps_table)
+normalized_features_reps_df = functools.reduce(lambda left, right: pd.merge(left, right, on=['condition', 'tag', 'rep'], how='outer'), normalized_features_reps).reset_index()
+normalized_features_reps_df.to_csv(f'{output_folder}puncta_features_normalized_reps.csv')
+
+logger.info('saved puncta feature dataframes')
+
+
+
+### move to new script
 # -------------- calculate feature information per cell --------------
-# grab major and granule_minor_axis_length for punctas
+# grab major and puncta_minor_axis_length for punctas
 minor_axis = feature_information.groupby(
-    ['image_name', 'cell_number'])['granule_minor_axis_length'].mean()
+    ['image_name', 'cell_number'])['puncta_minor_axis_length'].mean()
 major_axis = feature_information.groupby(
-    ['image_name', 'cell_number'])['granule_major_axis_length'].mean()
+    ['image_name', 'cell_number'])['puncta_major_axis_length'].mean()
 
 # calculate average size of punctas per cell
 puncta_avg_area = feature_information.groupby(
-    ['image_name', 'cell_number'])['granule_area'].mean().reset_index()
+    ['image_name', 'cell_number'])['puncta_area'].mean().reset_index()
 
 # calculate proportion of area in punctas
 cell_size = feature_information.groupby(
     ['image_name', 'cell_number'])['cell_size'].mean()
 puncta_area = feature_information.groupby(
-    ['image_name', 'cell_number'])['granule_area'].sum()
+    ['image_name', 'cell_number'])['puncta_area'].sum()
 puncta_proportion = ((puncta_area / cell_size) *
                    100).reset_index().rename(columns={0: 'proportion_puncta_area'})
 
 # calculate number of 'punctas' per cell
 puncta_count = feature_information.groupby(
-    ['image_name', 'cell_number'])['granule_area'].count()
+    ['image_name', 'cell_number'])['puncta_area'].count()
 
 # calculate average size of punctas per cell
 avg_eccentricity = feature_information.groupby(
-    ['image_name', 'cell_number'])['granule_eccentricity'].mean().reset_index()
+    ['image_name', 'cell_number'])['puncta_eccentricity'].mean().reset_index()
 
 # grab cell intensity mean 
-granule_cov_mean = feature_information.groupby(
-    ['image_name', 'cell_number'])['granule_cov'].mean()
+puncta_cov_mean = feature_information.groupby(
+    ['image_name', 'cell_number'])['puncta_cov'].mean()
 
 # grab cell intensity mean 
-granule_skew_mean = feature_information.groupby(
-    ['image_name', 'cell_number'])['granule_skew'].mean()
+puncta_skew_mean = feature_information.groupby(
+    ['image_name', 'cell_number'])['puncta_skew'].mean()
 
 # grab cell intensity mean 
 cell_rhm1_intensity_mean = feature_information.groupby(
@@ -233,8 +253,8 @@ cell_skew = feature_information.groupby(
     ['image_name', 'cell_number'])['cell_skew'].mean()
 
 # summarise, save to csv
-summary = functools.reduce(lambda left, right: pd.merge(left, right, on=['image_name', 'cell_number'], how='outer'), [cell_size.reset_index(), puncta_avg_area, puncta_proportion, puncta_count.reset_index(), minor_axis, major_axis, avg_eccentricity, granule_cov_mean, granule_skew_mean, g3bp_partition_coeff, cell_cov, cell_skew, cell_rhm1_intensity_mean])
-summary.columns = ['image_name', 'cell_number',  'cell_size', 'mean_puncta_area', 'puncta_area_proportion', 'puncta_count', 'puncta_mean_minor_axis', 'puncta_mean_major_axis', 'avg_eccentricity', 'granule_cov_mean', 'granule_skew_mean', 'g3bp_partition_coeff', 'cell_cov', 'cell_skew', 'cell_rhm1_intensity_mean']
+summary = functools.reduce(lambda left, right: pd.merge(left, right, on=['image_name', 'cell_number'], how='outer'), [cell_size.reset_index(), puncta_avg_area, puncta_proportion, puncta_count.reset_index(), minor_axis, major_axis, avg_eccentricity, puncta_cov_mean, puncta_skew_mean, g3bp_partition_coeff, cell_cov, cell_skew, cell_rhm1_intensity_mean])
+summary.columns = ['image_name', 'cell_number',  'cell_size', 'mean_puncta_area', 'puncta_area_proportion', 'puncta_count', 'puncta_mean_minor_axis', 'puncta_mean_major_axis', 'avg_eccentricity', 'puncta_cov_mean', 'puncta_skew_mean', 'g3bp_partition_coeff', 'cell_cov', 'cell_skew', 'cell_rhm1_intensity_mean']
 
 # extract image metadata
 summary['tag'] = summary['image_name'].str.split('-').str[0].str.split('_').str[-1]
@@ -273,8 +293,8 @@ norm_cell_summary_reps_df = functools.reduce(lambda left, right: pd.merge(left, 
 # -------------- plotting data --------------
 # suptitle, features_of_interest, raw_data, averaged_data, save_name
 plotting_list = [
-    ['per granule, not normalized', granule_features_of_interest, feature_information, granule_summary_reps_df,'puncta-features_pergranule_raw'],
-    ['per granule, normalized to cell intensity', granule_features_of_interest, feature_information_norm, granule_summary_reps_norm_df, 'puncta-features_pergranule_normalized'],
+    ['per puncta, not normalized', puncta_features_of_interest, feature_information, puncta_summary_reps_df,'puncta-features_perpuncta_raw'],
+    ['per puncta, normalized to cell intensity', puncta_features_of_interest, feature_information_norm, puncta_summary_reps_norm_df, 'puncta-features_perpuncta_normalized'],
     ['per cell, not normalized to cytoplasm intensity', cell_features_of_interest, summary, cell_summary_reps_df, 'puncta-features_percell_raw'],
     ['per cell, normalized to cytoplasm intensity', cell_features_of_interest, normalized_summary, norm_cell_summary_reps_df, 'puncta-features_percell_normalized']
 ]
@@ -376,7 +396,7 @@ for name, image in image_mask_dict.items():
     image_df = feature_information[(feature_information['image_name'] == name)]
     if len(image_df) > 0:
         cell_contour = image_df['cell_coords'].iloc[0]
-        coord_list = np.array(image_df.granule_coords)
+        coord_list = np.array(image_df.puncta_coords)
 
         # plot
         fig, (ax1, ax2) = plt.subplots(1, 2)
