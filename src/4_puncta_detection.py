@@ -43,6 +43,9 @@ file_list = [filename for filename in os.listdir(
 images = {filename.replace('.npy', ''): np.load(
     f'{input_folder}{filename}') for filename in file_list}
 
+# ---------------- important constants ----------------
+std_threshold = 3.8
+
 # --------------- process filtered masks for cytoplasm mask ---------------
 filtered_masks = {masks.replace('_mask.npy', ''): np.load(
     f'{mask_folder}{masks}', allow_pickle=True) for masks in os.listdir(f'{mask_folder}') if '_mask.npy' in masks}
@@ -129,7 +132,7 @@ for name, image in not_saturated.items():
         cell_mean = np.mean(cell[cell != 0])
         cell_std = np.std(cell[cell != 0])
         # use std to threshold puncta 
-        binary = (cell > (cell_std*3.8)).astype(int)
+        binary = (cell > (cell_std*std_threshold)).astype(int)
         # label thresholded puncta, remove small ones
         puncta_masks = measure.label(binary)
         puncta_masks = remove_small_objects(puncta_masks, 4**2)
