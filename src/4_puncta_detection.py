@@ -2,23 +2,14 @@ import os
 import numpy as np
 import seaborn as sns
 import pandas as pd
-import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib_scalebar.scalebar import ScaleBar
 import skimage.io
 import functools
-import cv2
 from skimage import measure, segmentation, morphology
 from skimage.morphology import remove_small_objects
-from skimage.feature import graycomatrix, graycoprops
-from skimage.util import img_as_ubyte
-from skimage.filters import threshold_otsu
-from skimage.segmentation import watershed
-from skimage.feature import peak_local_max
-from scipy import ndimage
 from scipy import stats
-from scipy.stats import skewtest
-from statannotations.Annotator import Annotator
+from scipy.stats import skew, skewtest
 from loguru import logger
 plt.rcParams.update({'font.size': 14})
 sns.set_palette('Paired')
@@ -28,13 +19,13 @@ logger.info('import ok')
 input_folder = 'python_results/initial_cleanup/'
 mask_folder = 'python_results/napari_masking/'
 output_folder = 'python_results/summary_calculations/'
-plotting_folder = 'python_results/plotting/'
+proof_folder = 'python_results/proofs/'
 
 if not os.path.exists(output_folder):
     os.mkdir(output_folder)
 
-if not os.path.exists(plotting_folder):
-    os.mkdir(plotting_folder)
+if not os.path.exists(proof_folder):
+    os.mkdir(proof_folder)
 
 
 def feature_extractor(mask, properties=False):
@@ -52,16 +43,49 @@ file_list = [filename for filename in os.listdir(
 images = {filename.replace('.npy', ''): np.load(
     f'{input_folder}{filename}') for filename in file_list}
 
-masks = np.load(f'{mask_folder}cytoplasm_masks.npy',
-                allow_pickle=True).item()
+# --------------- process filtered masks for cytoplasm mask ---------------
+filtered_masks = {masks.replace('_mask.npy', ''): np.load(
+    f'{mask_folder}{masks}', allow_pickle=True) for masks in os.listdir(f'{mask_folder}') if '_mask.npy' in masks}
 
-# make dictionary from images and masks array
+logger.info('removing nuclei from cell masks')
+cytoplasm_masks = {}
+for name, img in filtered_masks.items():
+    name
+    cell_mask = img[0, :, :]
+    nuc_mask = img[1, :, :]
+    # make binary masks
+    cell_mask_binary = np.where(cell_mask, 1, 0)
+    nuc_mask_binary = np.where(nuc_mask, 1, 0)
+    single_cytoplasm_masks = []
+    # need this elif in case images have no masks
+    if len(np.unique(cell_mask).tolist()) > 1:
+        for num in np.unique(cell_mask).tolist()[1:]:
+            num
+            # subtract whole nuclear mask per cell
+            cytoplasm = np.where(cell_mask == num, cell_mask_binary, 0)
+            cytoplasm_minus_nuc = np.where(cytoplasm == nuc_mask_binary, 0, cytoplasm)
+            if np.count_nonzero(cytoplasm) != np.count_nonzero(cytoplasm_minus_nuc):
+                # re-assign label
+                cytoplasm_num = np.where(cytoplasm_minus_nuc, num, 0)
+                single_cytoplasm_masks.append(cytoplasm_num)
+            else:
+                single_cytoplasm_masks.append(
+                    np.zeros(np.shape(cell_mask)).astype(int))
+    else:
+        single_cytoplasm_masks.append(
+        np.zeros(np.shape(cell_mask)).astype(int))
+    # add cells together and update dict
+    summary_array = sum(single_cytoplasm_masks)
+    cytoplasm_masks[name] = summary_array
+logger.info('nuclei removed')
+
+# make dictionary from images and cytoplasm masks
 image_mask_dict = {
-    key: np.stack([images[key][0, :, :], images[key][3, :, :], masks[key]])
+    key: np.stack([images[key][0, :, :], images[key][3, :, :], cytoplasm_masks[key]])
     for key in images
 }
 
-# ---------------- collect feature information ----------------
+# ---------------- remove saturated cells ----------------
 # remove saturated cells in case some were added during manual validation
 logger.info('removing saturated cells')
 not_saturated = {}
@@ -73,7 +97,7 @@ for name, image in image_mask_dict.items():
     for label in unique_val[1:]:
         pixel_count = np.count_nonzero(image[2, :, :] == label)
         cell = np.where(image[2, :, :] == label, image[1, :, :], 0)
-        saturated_count = np.count_nonzero(cell == 65535)
+        saturated_count = np.count_nonzero(cell == (2**16)-1) # assumes 16-bit image
 
         if (saturated_count/pixel_count) < 0.01:
             labels_filtered.append(label)
@@ -85,75 +109,85 @@ for name, image in image_mask_dict.items():
     cells_filtered_stack = np.stack(
         (image[0, :, :], image[1, :, :], cells_filtered))
     not_saturated[name] = cells_filtered_stack
+logger.info('saturated cells removed')
 
+# ---------------- collect feature information ----------------
 # now collect puncta and cell features info
 logger.info('collecting cell and puncta feature info')
 feature_information_list = []
 for name, image in not_saturated.items():
-    # logger.info(f'Processing {name}')
     labels_filtered = []
     unique_val, counts = np.unique(image[2, :, :], return_counts=True)
     # find cell outlines for later plotting
     cell_binary_mask = np.where(image[2, :, :] !=0, 1, 0)
     contours = measure.find_contours(cell_binary_mask, 0.8)
     contour = [x for x in contours if len(x) >= 100]
-    # loop to extract params from cells
+
+    # loop to extract parameters from cells
     for num in unique_val[1:]:
-        num
         cell = np.where(image[2, :, :] == num, image[1, :, :], 0)
         cell_mean = np.mean(cell[cell != 0])
         cell_std = np.std(cell[cell != 0])
+        # use std to threshold puncta 
         binary = (cell > (cell_std*3.8)).astype(int)
+        # label thresholded puncta, remove small ones
         puncta_masks = measure.label(binary)
         puncta_masks = remove_small_objects(puncta_masks, 4**2)
+        # extract puncta features
         cell_properties = feature_extractor(puncta_masks).add_prefix('puncta_')
+        # collect stress granule channel info for later
         g3bp_cell = np.where(image[2, :, :] == num, image[0, :, :], 0)
         g3bp_cell_mean = np.mean(g3bp_cell[g3bp_cell != 0])
 
-        # make list for cov and skew, add as columns to properties
-        puncta_cov_list = []
+        # make lists for custom per-puncta measurements
+        puncta_cv_list = []
         puncta_skew_list = []
-        puncta_intensity_list = []
-        g3bp_intensity_list = []
+        puncta_intensity_mean_list = []
+        g3bp_intensity_mean_list = []
         for puncta_num in np.unique(puncta_masks)[1:]:
-            puncta_num
             puncta = np.where(puncta_masks == puncta_num, image[1,:,:], 0)
             g3bp = np.where(puncta!=0, image[0,:,:], 0)
             puncta = puncta[puncta!=0]
             g3bp = g3bp[g3bp!=0]
-            puncta_cov = np.std(puncta) / np.mean(puncta)
-            puncta_cov_list.append(puncta_cov)
+            puncta_cv = np.std(puncta) / np.mean(puncta)
+            puncta_cv_list.append(puncta_cv)
             res = skewtest(puncta)
             puncta_skew = res.statistic
             puncta_skew_list.append(puncta_skew)
-            puncta_intensity_list.append(np.mean(puncta))
-            g3bp_intensity_list.append(np.mean(g3bp))
-        cell_properties['puncta_cov'] = puncta_cov_list
+            puncta_intensity_mean_list.append(np.mean(puncta))
+            g3bp_intensity_mean_list.append(np.mean(g3bp))
+        # add measurements as columns
+        cell_properties['puncta_cv'] = puncta_cv_list
         cell_properties['puncta_skew'] = puncta_skew_list
-        cell_properties['puncta_intensity'] = puncta_intensity_list
-        cell_properties['g3bp_intensity'] = g3bp_intensity_list
+        cell_properties['puncta_intensity_mean'] = puncta_intensity_mean_list
+        cell_properties['g3bp_intensity_mean'] = g3bp_intensity_mean_list
         
+        # if a cell has no puncta, fill row with zeros
         if len(cell_properties) < 1:
             cell_properties.loc[len(cell_properties)] = 0
 
+        # concatenate and add cell features
         properties = pd.concat([cell_properties])
         properties['image_name'] = name
         properties['cell_number'] = num
         properties['cell_size'] = np.size(cell[cell!=0])
-        properties['cell_cov'] = cell_std / cell_mean
+        properties['cell_cv'] = cell_std / cell_mean
         res = skewtest(cell[cell!=0])
         properties['cell_skew'] = res.statistic
         properties['cell_rhm1_intensity_mean'] = cell_mean
         properties['cell_g3bp_intensity_mean'] = g3bp_cell_mean
 
-        # add cell outlines to coords
+        # add cell outlines for later proof plotting
         properties['cell_coords'] = [contour]*len(properties)
 
+        # append properties to list
         feature_information_list.append(properties)
         
+# concatenate feature info list into one df
 feature_information = pd.concat(feature_information_list)
 logger.info('completed feature collection')
 
+# ---------------- wrangle feature information ----------------
 # extract image metadata
 feature_information['tag'] = feature_information['image_name'].str.split('-').str[0].str.split('_').str[-1]
 feature_information['condition'] = feature_information['image_name'].str.split('_').str[2].str.split('-').str[0]
@@ -164,16 +198,18 @@ feature_information['puncta_aspect_ratio'] = feature_information['puncta_minor_a
 feature_information['puncta_circularity'] = (12.566*feature_information['puncta_area'])/(feature_information['puncta_perimeter']**2)
 
 # add partitioning coeff for g3bp
-feature_information['g3bp_partition_coeff'] = feature_information['g3bp_intensity'] / feature_information['cell_g3bp_intensity_mean']
+feature_information['g3bp_partition_coeff'] = feature_information['g3bp_intensity_mean'] / feature_information['cell_g3bp_intensity_mean']
+feature_information['rhm1_partition_coeff'] = feature_information['puncta_intensity_mean'] / feature_information['cell_rhm1_intensity_mean']
 
 # remove outliers
-puncta_features_of_interest = ['puncta_area', 'puncta_eccentricity', 'puncta_aspect_ratio', 'puncta_circularity', 'puncta_cov', 'puncta_skew', 'g3bp_partition_coeff', 'cell_cov', 'cell_skew']
+puncta_features_of_interest = ['puncta_area', 'puncta_eccentricity', 'puncta_aspect_ratio', 'puncta_circularity', 'puncta_cv', 'puncta_skew', 'g3bp_partition_coeff', 'rhm1_partition_coeff', 'cell_cv', 'cell_skew']
 for col in puncta_features_of_interest[:-1]:
     feature_information = feature_information[np.abs(stats.zscore(feature_information[col])) < 3]
 
 # save data
 feature_information.to_csv(f'{output_folder}puncta_features.csv')
 
+# ---------------- make additional dataframes for averaging and normalization ----------------
 # make additional df for avgs per replicate
 feature_information_reps = []
 for col in puncta_features_of_interest:
@@ -198,197 +234,9 @@ normalized_features_reps_df.to_csv(f'{output_folder}puncta_features_normalized_r
 
 logger.info('saved puncta feature dataframes')
 
-
-
-### move to new script
-# -------------- calculate feature information per cell --------------
-# grab major and puncta_minor_axis_length for punctas
-minor_axis = feature_information.groupby(
-    ['image_name', 'cell_number'])['puncta_minor_axis_length'].mean()
-major_axis = feature_information.groupby(
-    ['image_name', 'cell_number'])['puncta_major_axis_length'].mean()
-
-# calculate average size of punctas per cell
-puncta_avg_area = feature_information.groupby(
-    ['image_name', 'cell_number'])['puncta_area'].mean().reset_index()
-
-# calculate proportion of area in punctas
-cell_size = feature_information.groupby(
-    ['image_name', 'cell_number'])['cell_size'].mean()
-puncta_area = feature_information.groupby(
-    ['image_name', 'cell_number'])['puncta_area'].sum()
-puncta_proportion = ((puncta_area / cell_size) *
-                   100).reset_index().rename(columns={0: 'proportion_puncta_area'})
-
-# calculate number of 'punctas' per cell
-puncta_count = feature_information.groupby(
-    ['image_name', 'cell_number'])['puncta_area'].count()
-
-# calculate average size of punctas per cell
-avg_eccentricity = feature_information.groupby(
-    ['image_name', 'cell_number'])['puncta_eccentricity'].mean().reset_index()
-
-# grab cell intensity mean 
-puncta_cov_mean = feature_information.groupby(
-    ['image_name', 'cell_number'])['puncta_cov'].mean()
-
-# grab cell intensity mean 
-puncta_skew_mean = feature_information.groupby(
-    ['image_name', 'cell_number'])['puncta_skew'].mean()
-
-# grab cell intensity mean 
-cell_rhm1_intensity_mean = feature_information.groupby(
-    ['image_name', 'cell_number'])['cell_rhm1_intensity_mean'].mean()
-
-# grab cell g3bp1 partitioning coefficient 
-g3bp_partition_coeff = feature_information.groupby(
-    ['image_name', 'cell_number'])['g3bp_partition_coeff'].mean()
-
-# grab cell cell rhm1 cov 
-cell_cov = feature_information.groupby(
-    ['image_name', 'cell_number'])['cell_cov'].mean()
-
-# grab cell cell rhm1 skew 
-cell_skew = feature_information.groupby(
-    ['image_name', 'cell_number'])['cell_skew'].mean()
-
-# summarise, save to csv
-summary = functools.reduce(lambda left, right: pd.merge(left, right, on=['image_name', 'cell_number'], how='outer'), [cell_size.reset_index(), puncta_avg_area, puncta_proportion, puncta_count.reset_index(), minor_axis, major_axis, avg_eccentricity, puncta_cov_mean, puncta_skew_mean, g3bp_partition_coeff, cell_cov, cell_skew, cell_rhm1_intensity_mean])
-summary.columns = ['image_name', 'cell_number',  'cell_size', 'mean_puncta_area', 'puncta_area_proportion', 'puncta_count', 'puncta_mean_minor_axis', 'puncta_mean_major_axis', 'avg_eccentricity', 'puncta_cov_mean', 'puncta_skew_mean', 'g3bp_partition_coeff', 'cell_cov', 'cell_skew', 'cell_rhm1_intensity_mean']
-
-# extract image metadata
-summary['tag'] = summary['image_name'].str.split('-').str[0].str.split('_').str[-1]
-summary['condition'] = summary['image_name'].str.split('_').str[2].str.split('-').str[0]
-summary['rep'] = summary['image_name'].str.split('_').str[-1].str.split('-').str[0]
-
-# features of interest
-cell_features_of_interest = summary.columns.tolist()[3:-3]
-
-# remove outliers
-for col in cell_features_of_interest:
-    summary = summary[np.abs(stats.zscore(summary[col])) < 3]
-
-# save summary
-summary.to_csv(f'{output_folder}puncta_detection_summary.csv')
-
-# average data by biological replicate
-cell_summary_reps = []
-for col in cell_features_of_interest:
-    reps_table = summary.groupby(['condition', 'tag', 'rep']).mean(numeric_only=True)[f'{col}']
-    cell_summary_reps.append(reps_table)
-cell_summary_reps_df = functools.reduce(lambda left, right: pd.merge(left, right, on=['condition', 'tag', 'rep'], how='outer'), cell_summary_reps).reset_index()
-
-# normalize to mean cell intensity
-normalized_summary = summary.copy()
-for col in cell_features_of_interest:
-    normalized_summary[col] = normalized_summary[col] / normalized_summary['cell_rhm1_intensity_mean']
-
-# average normalized data by biological replicate
-norm_cell_summary_reps = []
-for col in cell_features_of_interest:
-    reps_table = normalized_summary.groupby(['condition', 'tag', 'rep']).mean(numeric_only=True)[f'{col}']
-    norm_cell_summary_reps.append(reps_table)
-norm_cell_summary_reps_df = functools.reduce(lambda left, right: pd.merge(left, right, on=['condition', 'tag', 'rep'], how='outer'), norm_cell_summary_reps).reset_index()
-
-# -------------- plotting data --------------
-# suptitle, features_of_interest, raw_data, averaged_data, save_name
-plotting_list = [
-    ['per puncta, not normalized', puncta_features_of_interest, feature_information, puncta_summary_reps_df,'puncta-features_perpuncta_raw'],
-    ['per puncta, normalized to cell intensity', puncta_features_of_interest, feature_information_norm, puncta_summary_reps_norm_df, 'puncta-features_perpuncta_normalized'],
-    ['per cell, not normalized to cytoplasm intensity', cell_features_of_interest, summary, cell_summary_reps_df, 'puncta-features_percell_raw'],
-    ['per cell, normalized to cytoplasm intensity', cell_features_of_interest, normalized_summary, norm_cell_summary_reps_df, 'puncta-features_percell_normalized']
-]
-
-# plot by pairing FLAG and GFP tags, including stats
-pairs = [(('PBS', 'GFP'), ('PBS', 'FLAG')),
-        (('NaAsO2', 'GFP'), ('NaAsO2', 'FLAG')),
-        (('HS', 'GFP'), ('HS', 'FLAG'))]
-order = ['PBS', 'NaAsO2', 'HS']
-x = 'condition'
-y = 'tag'
-for sublist in plotting_list:
-    plt.figure(figsize=(15, 15))
-    plt.subplots_adjust(hspace=0.5)
-    plt.suptitle(f'calculated parameters - {sublist[0]}', fontsize=18, y=0.99)
-    for n, parameter in enumerate(sublist[1]):
-
-        # add a new subplot iteratively
-        ax = plt.subplot(4, 3, n + 1)
-
-        # filter df and plot ticker on the new subplot axis
-        sns.stripplot(data=sublist[2], x=x, y=parameter, dodge='True', 
-                        edgecolor='white', linewidth=1, size=8, alpha=0.4, hue=y, order=order, ax=ax)
-    
-        # store legends info
-        handles, labels = ax.get_legend_handles_labels()
-
-        # continue plotting
-        sns.stripplot(data=sublist[3], x=x, y=parameter, dodge='True', edgecolor='k', linewidth=1, size=8, hue=y, order=order, ax=ax)
-        sns.boxplot(data=sublist[3], x=x, y=parameter,
-                    palette=['.9'], hue=y, order=order, ax=ax)
-
-        # remove all legends
-        ax.legend().remove()
-
-        # statannot stats
-        annotator = Annotator(ax, pairs, data=sublist[3], x=x, y=parameter, hue=y, order=order)
-        annotator.configure(test='Mann-Whitney', verbose=2)
-        annotator.apply_test()
-        annotator.annotate()
-
-        # formatting
-        sns.despine()
-        ax.set_xticklabels(['PBS', r'NaAsO$_{2}$', 'HS'])
-
-    plt.tight_layout()
-    plt.legend(handles, labels, bbox_to_anchor=(1.1, 1), title='RHM1 tag')
-    plt.savefig(f'{output_folder}tag-paired_{sublist[4]}.png', bbox_inches='tight',pad_inches = 0.1, dpi = 300)
-
-
-# plot by pairing conditions
-palette = ['#A6CEE3', '#1F78B4', '#F5CB5C']
-order = ['PBS', 'NaAsO2', 'HS']
-x = 'tag'
-y = 'condition'
-for sublist in plotting_list:
-    sublist
-    plt.figure(figsize=(15, 15))
-    plt.subplots_adjust(hspace=0.5)
-    plt.suptitle(f'calculated parameters - {sublist[0]}', fontsize=18, y=0.99)
-    for n, parameter in enumerate(sublist[1]):
-
-        # add a new subplot iteratively
-        ax = plt.subplot(4, 3, n + 1)
-
-        # filter df and plot ticker on the new subplot axis
-        sns.stripplot(data=sublist[3], x=x, y=parameter, dodge='True', edgecolor='k', linewidth=1, size=8, hue=y, palette=palette, hue_order=order, zorder=2, ax=ax)
-    
-        # store legends info
-        handles, labels = ax.get_legend_handles_labels()
-
-        # continue plotting
-        sns.stripplot(data=sublist[2], x=x, y=parameter, dodge='True', 
-                        edgecolor='white', linewidth=1, size=8, alpha=0.4, hue=y, palette=palette, hue_order=order, zorder=1, ax=ax)
-        sns.boxplot(data=sublist[3], x=x, y=parameter,
-                    palette=['.9'], hue=y, hue_order=order, zorder=0, ax=ax)
-
-        # remove all legends
-        ax.legend().remove()
-
-        # formatting
-        sns.despine()
-        ax.set_xticklabels(['FLAG-RHM1', 'GFP-RHM1'])
-        ax.set_xlabel('')
-
-    plt.tight_layout()
-    plt.legend(handles, labels, bbox_to_anchor=(1.1, 1), title='Condition')
-    ax.legend(labels=['PBS', r'NaAsO$_{2}$', 'HS'])
-    plt.savefig(f'{output_folder}condition-paired_{sublist[4]}.png', bbox_inches='tight',pad_inches = 0.1, dpi = 300)
-
-# -------------- plotting proofs --------------
-# plot proofs
+# -------------- plot the proofs --------------
+# generate a proof for each image including puncta segmentation overlaid
 for name, image in image_mask_dict.items():
-    name
     unique_val, counts = np.unique(image[2, :, :], return_counts=True)
 
     # extract coords
@@ -421,5 +269,7 @@ for name, image in image_mask_dict.items():
         # title and save
         fig.suptitle(name, y=0.78)
         fig.tight_layout()
-        fig.savefig(f'{plotting_folder}{name}_proof.png', bbox_inches='tight',pad_inches = 0.1, dpi = 300)
+        fig.savefig(f'{proof_folder}{name}_proof.png', bbox_inches='tight',pad_inches = 0.1, dpi = 300)
         plt.close()
+        
+logger.info('saved proofs')
