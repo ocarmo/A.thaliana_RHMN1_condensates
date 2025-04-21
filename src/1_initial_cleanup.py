@@ -7,7 +7,7 @@ from loguru import logger
 import numpy as np
 import os
 
-input_path = 'M:/Olivia'
+input_folder = 'raw_data'
 output_folder = 'python_results/initial_cleanup/'
 
 def czi_converter(image_name, input_folder, output_folder, tiff=False, array=True):
@@ -29,7 +29,7 @@ def czi_converter(image_name, input_folder, output_folder, tiff=False, array=Tru
     image_name = image_name.split('\\')[-1]
 
     if tiff == True:
-        # Save image to TIFF file with image number
+        # save image to TIFF file with image number
         OmeTiffWriter.save(
             image, f'{output_folder}{image_name}.tif', dim_order='CYX')
 
@@ -38,21 +38,27 @@ def czi_converter(image_name, input_folder, output_folder, tiff=False, array=Tru
 
 
 # --------------- initalize file_list ---------------
-# find directories of interest
-experiments = ['2024-11-22', '2024-11-27', '2024-11-29']
-walk_list = [x[0] for x in os.walk(input_path)]
-walk_list = [item for item in walk_list if any(x in item for x in experiments)]
+source = 'raw_data'
 
-# read in all image files (LSM900)
-file_list = []
-for folder_path in walk_list:
-    folder_path
-    images = [[f'{root}\{filename}' for filename in files if '.czi' in filename]
-        for root, dirs, files in os.walk(f'{folder_path}')]
-    file_list.append(images[0])
+if source == 'raw_data':
+    flat_file_list = [filename for filename in os.listdir(input_folder) if '.czi' in filename]
 
-# flatten file_list
-flat_file_list = [item for sublist in file_list for item in sublist]
+else:
+    # find directories of interest from shared drive 'M:/Olivia'
+    experiments = ['2024-11-22', '2024-11-27', '2024-11-29']
+    walk_list = [x[0] for x in os.walk(input_folder)]
+    walk_list = [item for item in walk_list if any(x in item for x in experiments)]
+
+    # read in all image files
+    file_list = []
+    for folder_path in walk_list:
+        folder_path
+        images = [[f'{root}\{filename}' for filename in files if '.czi' in filename]
+            for root, dirs, files in os.walk(f'{folder_path}')]
+        file_list.append(images[0])
+
+    # flatten file_list
+    flat_file_list = [item for sublist in file_list for item in sublist]
 
 # remove images that do not require analysis (e.g., qualitative controls)
 do_not_quantitate = ['_no-', 'UT'] 
@@ -63,7 +69,7 @@ for filename in flat_file_list:
     if all(word not in filename for word in do_not_quantitate):
         filename
         filename = filename.split('.')[0]
-        filename = filename.split(f'{input_path}')[-1]
+        filename = filename.split(f'{input_folder}')[-1]
         image_names.append(filename)
 
 # remove duplicates
@@ -71,7 +77,7 @@ image_names = list(dict.fromkeys(image_names))
 
 # collect and convert images to np arrays
 for name in image_names:
-    czi_converter(name, input_folder=f'{input_path}',
+    czi_converter(name, input_folder=f'{input_folder}',
                   output_folder=f'{output_folder}')
 
 logger.info('initial cleanup complete :)')
