@@ -13,10 +13,11 @@ plt.rcParams.update({'font.size': 14})
 logger.info('import OK')
 
 input_folder = 'raw_data/'
-plotting_folder = 'python_results/summary_calculations/'
+output_folder = 'python_results/plotting/'
 
-if not os.path.exists(plotting_folder):
-    os.mkdir(plotting_folder)
+if not os.path.exists(output_folder):
+    os.mkdir(output_folder)
+
 
 # ---------------- initialize file lists ----------------
 # read in calculated pixel data
@@ -34,4 +35,4 @@ for name, val in pixels.items():
     plt.plot(val['Sheet1']['Distance_(microns)'], mhat, color='m')
     plt.plot(val['Sheet2']['Distance_(microns)'], ghat, color='g')
     plt.tight_layout()
-    plt.savefig(f'{plotting_folder}{name}_intensitythumbnail.png', format='png', dpi=300)
+    plt.savefig(f'{output_folder}{name}_intensitythumbnail.png', format='png', dpi=300)
