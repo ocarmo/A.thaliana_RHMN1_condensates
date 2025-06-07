@@ -13,7 +13,7 @@ Determine whether RHM1 co-occurs with stress granules in a heterologous system. 
 From czi files, cells and nuclei were segmented using CellPose. RHM1 foci were segmented using 3.8 standard deviations per cell. The mask arrays were export as a pandas dataframe/csv for further processing.
 
 ### Figures in manuscript
-````intensity_lineplot.py``` was used to generate data depicted in Fig S1.
+```intensity_lineplot.py``` was used to generate data depicted in Fig S1.
 Scripts with prefixes 1-6 were used to generate data depicted in Supplemental Fig S1. 
 
 ### Analysis software
