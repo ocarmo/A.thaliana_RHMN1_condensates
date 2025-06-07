@@ -105,7 +105,6 @@ for name, img in raw_stacks.items():
     sum_array = sum(single_cells)
     mask_stack = np.stack([sum_array, nuc_mask])
     raw_masks_eroded[name] = mask_stack
-logger.info('completed cell mask eroding')
 
 # make new dictionary to check for saturation
 image_names = images.keys()
@@ -170,45 +169,3 @@ for image_name, image_stack in unval_images.items():
     mask_stack = masks_filtered[image_name].copy()
     filtered_masks[image_name] = filter_masks(
         image_stack, image_name, mask_stack)
-
-# --------------- process filtered masks ---------------
-# TODO make below lines a new script
-# reload previous masks for per-cell extraction
-filtered_masks = {masks.replace('_mask.npy', ''): np.load(
-    f'{output_folder}{masks}', allow_pickle=True) for masks in os.listdir(f'{output_folder}') if '_mask.npy' in masks}
-
-logger.info('removing nuclei from cell masks')
-cytoplasm_masks = {}
-for name, img in filtered_masks.items():
-    name
-    cell_mask = img[0, :, :]
-    nuc_mask = img[1, :, :]
-    # make binary masks
-    cell_mask_binary = np.where(cell_mask, 1, 0)
-    nuc_mask_binary = np.where(nuc_mask, 1, 0)
-    single_cytoplasm_masks = []
-    # need this elif in case images have no masks
-    if len(np.unique(cell_mask).tolist()) > 1:
-        for num in np.unique(cell_mask).tolist()[1:]:
-            num
-            # subtract whole nuclear mask per cell
-            cytoplasm = np.where(cell_mask == num, cell_mask_binary, 0)
-            cytoplasm_minus_nuc = np.where(cytoplasm == nuc_mask_binary, 0, cytoplasm)
-            if np.count_nonzero(cytoplasm) != np.count_nonzero(cytoplasm_minus_nuc):
-                # re-assign label
-                cytoplasm_num = np.where(cytoplasm_minus_nuc, num, 0)
-                single_cytoplasm_masks.append(cytoplasm_num)
-            else:
-                single_cytoplasm_masks.append(
-                    np.zeros(np.shape(cell_mask)).astype(int))
-    else:
-        single_cytoplasm_masks.append(
-        np.zeros(np.shape(cell_mask)).astype(int))
-    # add cells together and update dict
-    summary_array = sum(single_cytoplasm_masks)
-    cytoplasm_masks[name] = summary_array
-logger.info('nuclei removed')
-
-# ---------------save arrays---------------
-np.save(f'{output_folder}cytoplasm_masks.npy', cytoplasm_masks)
-logger.info('mask arrays saved')
