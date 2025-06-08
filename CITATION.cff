@@ -1,0 +1,38 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: >-
+  Supplement: Arabidopsis thaliana RHAMNOSE 1 condensates in
+  heterologous systems
+message: >-
+  If you use this dataset, please cite it using the metadata
+  from this file.
+type: dataset
+authors:
+  - given-names: Olivia M. S.
+    family-names: Carmo
+    email: olivia.carmo@bcm.edu
+    affiliation: 'Baylor College of Medicine, Houston, TX, USA'
+    orcid: 'https://orcid.org/0000-0002-0132-3843'
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.15253472
+  - type: doi
+    value: 10.1101/2024.02.15.580454
+abstract: >-
+  This repository contains analysis scripts associated with
+  the manuscript titled Arabidopsis thaliana RHAMNOSE 1
+  condensate formation drives UDP-rhamnose synthesis.
+  Rhamnose is an essential component of the plant cell wall
+  and is synthesized from uridine diphosphate (UDP)-glucose
+  by the RHAMNOSE1 (RHM1) enzyme. RHM1 localizes to
+  biomolecular condensates in plants, but their identity,
+  formation, and function remain elusive. The datasets
+  analyzed here demonstrate that RHAMNOSE 1 does not
+  co-localize with stress granules when transiently
+  expressed in a heterologous system, mammalian cells.
+keywords:
+  - condensates
+  - plant biology
+license: MIT
